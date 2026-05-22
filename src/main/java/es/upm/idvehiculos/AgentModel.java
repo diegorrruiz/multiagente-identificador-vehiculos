@@ -18,14 +18,10 @@ public enum AgentModel {
 
     public static AgentModel getEnum(String value) {
         switch (value) {
-            case "PerceptionAgent":
-                return PERCEPTION;
-            case "ProcessingAgent":
-                return PROCESSING;
-            case "UIAgent":
-                return UI;
-            default:
-                return DESCONOCIDO;
+            case "PerceptionAgent": return PERCEPTION;
+            case "ProcessingAgent": return PROCESSING;
+            case "UIAgent": return UI;
+            default: return DESCONOCIDO;
         }
     }
 }
