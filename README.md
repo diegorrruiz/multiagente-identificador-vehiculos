@@ -159,7 +159,7 @@ El sistema filtra las siguientes clases del dataset COCO:
 
 ---
 
-## ⚙️ Parámetros configurables
+## Parámetros configurables
 
 | Parámetro | Ubicación | Valor por defecto | Descripción |
 |-----------|-----------|-------------------|-------------|
@@ -171,7 +171,7 @@ El sistema filtra las siguientes clases del dataset COCO:
 
 ---
 
-## 📄 Licencia
+## Licencia
 
 Este proyecto está bajo la licencia MIT. Consulta el archivo [LICENSE](LICENSE) para más detalles.
 
