@@ -68,7 +68,7 @@ Las siguientes dependencias deben añadirse al `pom.xml` (no están incluidas en
 
 ---
 
-## Instalación y ejecución
+## Instalación y ejecución 
 
 ### 1. Clonar el repositorio
 
@@ -108,9 +108,8 @@ imagenes/
 
 ### 5. Ejecutar
 
-```bash
-java -cp target/multiagente-identificador-vehiculos-1.0-SNAPSHOT.jar es.upm.idvehiculos.Main
-```
+Ejecutar la clase `es.upm.idvehiculos.Main` como aplicación Java.
+
 
 ---
 
