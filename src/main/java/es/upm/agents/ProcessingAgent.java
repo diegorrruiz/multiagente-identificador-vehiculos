@@ -56,6 +56,7 @@ public class ProcessingAgent extends AgentBase {
     protected void setup() {
         this.type = AgentModel.PROCESSING;
         super.setup();
+        registerAgentDF();
         log("Iniciado");
 
         if (params.length == 0 || params[0] == null || params[0].isBlank()) {
@@ -187,6 +188,7 @@ public class ProcessingAgent extends AgentBase {
 
     @Override
     protected void takeDown() {
+        deregisterAgentDF();
         log("Terminando ProcessingAgent.");
     }
 }
