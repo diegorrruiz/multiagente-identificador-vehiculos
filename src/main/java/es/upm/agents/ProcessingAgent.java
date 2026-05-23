@@ -22,7 +22,8 @@ public class ProcessingAgent extends AgentBase {
     // OPCIÓN 2: Cargar la librería nativa directamente por su ruta absoluta
     static {
         try {
-            System.load("C:\\Users\\X421FA\\Documents\\Sistemas Inteligentes\\opencv_java4120.dll");
+            String libraryPath = new java.io.File("src/main/resources/models/opencv_java4120.dll").getAbsolutePath();
+            System.load(libraryPath);
             System.out.println(System.currentTimeMillis() + ": [OpenCV] Librería nativa cargada correctamente desde la ruta absoluta.");
         } catch (UnsatisfiedLinkError e) {
             System.err.println(System.currentTimeMillis() + ": [OpenCV] ERROR: No se pudo cargar la librería nativa de OpenCV desde la ruta especificada.");
@@ -155,7 +156,7 @@ public class ProcessingAgent extends AgentBase {
                     }
 
                     // Umbral de confianza razonable para detectar vehículos
-                    if (maxScore > 0.5 && classId < classNames.size()) {
+                    if (maxScore > 0.40 && classId < classNames.size()) {
                         String className = classNames.get(classId);
 
                         if (vehicleClasses.contains(className)) {
