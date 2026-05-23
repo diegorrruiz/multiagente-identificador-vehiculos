@@ -15,6 +15,7 @@ import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class PerceptionAgent extends AgentBase {
 
@@ -25,6 +26,7 @@ public class PerceptionAgent extends AgentBase {
     private final Set<String>   processedImages  = new HashSet<>();
     private final Queue<String> pendingImages    = new LinkedList<>();
     private final Set<String>   activeProcessors = new HashSet<>();
+    private final AtomicInteger processorCounter = new AtomicInteger(0);
 
     @Override
     protected void setup() {
@@ -81,7 +83,7 @@ public class PerceptionAgent extends AgentBase {
     private synchronized void checkAndSpawnProcessors() {
         while (activeProcessors.size() < MAX_PROCESSORS && !pendingImages.isEmpty()) {
             String imagePath = pendingImages.poll();
-            String agentName = "Processor-" + System.currentTimeMillis() + "-" + activeProcessors.size();
+            String agentName = "Processor-" + processorCounter.getAndIncrement();
             activeProcessors.add(agentName);
             addBehaviour(new CreateProcessingAgentBehaviour(imagePath, agentName));
         }
