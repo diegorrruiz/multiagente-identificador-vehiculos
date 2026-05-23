@@ -60,7 +60,7 @@ public class PerceptionAgent extends AgentBase {
             }
 
             File[] files = folder.listFiles((dir, name) ->
-                    name.endsWith(".jpg") || name.endsWith(".png") || name.endsWith(".jpeg")
+                    name.endsWith(".jpg") || name.endsWith(".png") || name.endsWith(".jpeg") || name.endsWith(".webp")
             );
 
             if (files == null || files.length == 0) {
