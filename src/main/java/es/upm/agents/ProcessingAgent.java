@@ -19,7 +19,7 @@ import java.util.*;
 public class ProcessingAgent extends AgentBase {
     public static final String NICKNAME = "ProcessingAgent";
 
-    // OPCIÓN 2: Cargar la librería nativa directamente por su ruta absoluta
+    // Cargar la librería nativa
     static {
         try {
             String libraryPath = new java.io.File("src/main/resources/models/opencv_java4120.dll").getAbsolutePath();
@@ -39,7 +39,7 @@ public class ProcessingAgent extends AgentBase {
         this.type = AgentModel.PROCESSING;
         super.setup();
         log("Iniciado");
-        
+
         // No registramos en el DF para evitar advertencias 'not-registered' en takeDown()
         // ya que estos agentes son temporales y dinámicos.
 
@@ -62,15 +62,15 @@ public class ProcessingAgent extends AgentBase {
                     MessageTemplate.MatchOntology("process-image")
             );
 
-            // JADE Best Practice: usar receive() + block() en lugar de blockingReceive()
+            // receive() + block()
             ACLMessage msg = myAgent.receive(mt);
             if (msg != null) {
                 String imagePath = msg.getContent();
                 log("Imagen recibida para procesar: " + imagePath);
 
                 myAgent.addBehaviour(new ProcessImageBehaviour(imagePath));
-                
-                // Removemos el receptor ya que procesará una sola imagen y terminará
+
+                // Borramos el receptor ya que procesará una sola imagen y terminará
                 myAgent.removeBehaviour(this);
             } else {
                 block();
@@ -88,7 +88,7 @@ public class ProcessingAgent extends AgentBase {
         @Override
         public void action() {
             log("Procesando imagen con YOLOv8...");
-            
+
             Mat img = null;
             Mat blob = null;
             Mat output = null;
@@ -168,22 +168,23 @@ public class ProcessingAgent extends AgentBase {
                     }
                 }
 
-                // Crear mensaje de resultado
-                String detectionResult = detectedVehicles.isEmpty()
-                        ? "No se detectaron vehículos."
-                        : "Vehículos detectados: " + detectedVehicles;
+                String json = "{ \"resultado\": \"" +
+                        (detectedVehicles.isEmpty()
+                                ? "No se detectaron vehículos."
+                                : "Vehículos detectados: " + detectedVehicles) +
+                        "\", \"imagen\": \"" + imagePath + "\" }";
 
                 ACLMessage resultMsg = new ACLMessage(ACLMessage.INFORM);
                 resultMsg.setOntology("detection-result");
-                resultMsg.setContent(detectionResult);
+                resultMsg.setContent(json);
 
                 DFAgentDescription[] uiAgents = getAgentsDF(AgentModel.UI);
                 if (uiAgents.length > 0) {
                     resultMsg.addReceiver(uiAgents[0].getName());
                     myAgent.send(resultMsg);
-                    log("Resultado enviado a " + uiAgents[0].getName().getLocalName() + ": " + detectionResult);
+                    log("Resultado enviado a " + uiAgents[0].getName().getLocalName() + ": " + json);
                 } else {
-                    loge("No se encontró UIAgent en el DF. Resultado de consola: " + detectionResult);
+                    loge("No se encontró UIAgent en el DF. Resultado de consola: " + json);
                 }
             } catch (Exception e) {
                 loge("Excepción durante el procesamiento de la imagen: " + e.getMessage());

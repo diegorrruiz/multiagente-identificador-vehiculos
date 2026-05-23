@@ -33,7 +33,6 @@ public class UIAgent extends AgentBase {
                 String result = msg.getContent();
                 log("Resultado de detección recibido: " + result);
 
-                // Aquí podrías actualizar una GUI, enviar a web, etc.
             } else {
                 block();
             }
