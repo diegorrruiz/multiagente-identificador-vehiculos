@@ -3,36 +3,54 @@ package es.upm.agents;
 import es.upm.idvehiculos.AgentBase;
 import es.upm.idvehiculos.AgentModel;
 import jade.core.AID;
-import jade.core.behaviours.CyclicBehaviour;
 import jade.core.behaviours.OneShotBehaviour;
 import jade.lang.acl.ACLMessage;
-import jade.lang.acl.MessageTemplate;
 import jade.domain.FIPAAgentManagement.DFAgentDescription;
 import org.opencv.core.*;
 import org.opencv.dnn.*;
 import org.opencv.imgcodecs.Imgcodecs;
 
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
 
 public class ProcessingAgent extends AgentBase {
+
     public static final String NICKNAME = "ProcessingAgent";
 
-    // Cargar la librería nativa
+    private static final String MODEL_PATH      = "src/main/resources/models/yolov8n.onnx";
+    private static final String COCO_NAMES_PATH = "src/main/resources/models/coco.names";
+    private static final String OPENCV_DLL_PATH = "src/main/resources/models/opencv_java4120.dll";
+
     static {
         try {
-            String libraryPath = new java.io.File("src/main/resources/models/opencv_java4120.dll").getAbsolutePath();
-            System.load(libraryPath);
-            System.out.println(System.currentTimeMillis() + ": [OpenCV] Librería nativa cargada correctamente desde la ruta absoluta.");
+            System.load(new File(OPENCV_DLL_PATH).getAbsolutePath());
+            System.out.println(System.currentTimeMillis() + ": [OpenCV] Librería nativa cargada correctamente.");
         } catch (UnsatisfiedLinkError e) {
-            System.err.println(System.currentTimeMillis() + ": [OpenCV] ERROR: No se pudo cargar la librería nativa de OpenCV desde la ruta especificada.");
-            System.err.println(System.currentTimeMillis() + ": [OpenCV] Asegúrate de colocar el archivo 'opencv_java4120.dll' en: C:\\Users\\X421FA\\Documents\\Sistemas Inteligentes\\");
-            System.err.println(System.currentTimeMillis() + ": [OpenCV] Detalle del error: " + e.getMessage());
+            System.err.println(System.currentTimeMillis() + ": [OpenCV] ERROR cargando librería nativa: " + e.getMessage());
         }
     }
 
-    private List<String> classNames;
+    private static volatile List<String> sharedClassNames = null;
+    private static final Object CLASS_NAMES_LOCK = new Object();
+
+    private static List<String> getClassNames() {
+        if (sharedClassNames == null) {
+            synchronized (CLASS_NAMES_LOCK) {
+                if (sharedClassNames == null) {
+                    try {
+                        sharedClassNames = Collections.unmodifiableList(
+                                Files.readAllLines(Paths.get(COCO_NAMES_PATH)));
+                    } catch (Exception e) {
+                        System.err.println("[ProcessingAgent] ERROR cargando coco.names: " + e.getMessage());
+                        sharedClassNames = Collections.emptyList();
+                    }
+                }
+            }
+        }
+        return sharedClassNames;
+    }
 
     @Override
     protected void setup() {
@@ -40,139 +58,98 @@ public class ProcessingAgent extends AgentBase {
         super.setup();
         log("Iniciado");
 
-        // No registramos en el DF para evitar advertencias 'not-registered' en takeDown()
-        // ya que estos agentes son temporales y dinámicos.
+        if (params.length == 0 || params[0] == null || params[0].isBlank()) {
+            loge("No se recibió ruta de imagen como argumento. Terminando.");
+            doDelete();
+            return;
+        }
+        String imagePath = params[0];
 
-        // Cargar nombres de clases COCO
+        Net net;
         try {
-            classNames = Files.readAllLines(Paths.get("src/main/resources/models/coco.names"));
+            net = Dnn.readNetFromONNX(MODEL_PATH);
+            log("Modelo YOLOv8 listo para: " + new File(imagePath).getName());
         } catch (Exception e) {
-            loge("ERROR cargando coco.names: " + e.getMessage());
-            classNames = new ArrayList<>();
+            loge("No se pudo cargar el modelo YOLO: " + e.getMessage());
+            doDelete();
+            return;
         }
 
-        addBehaviour(new ImageProcessingReceiverBehaviour());
-    }
-
-    private class ImageProcessingReceiverBehaviour extends CyclicBehaviour {
-        @Override
-        public void action() {
-            MessageTemplate mt = MessageTemplate.and(
-                    MessageTemplate.MatchPerformative(ACLMessage.REQUEST),
-                    MessageTemplate.MatchOntology("process-image")
-            );
-
-            // receive() + block()
-            ACLMessage msg = myAgent.receive(mt);
-            if (msg != null) {
-                String imagePath = msg.getContent();
-                log("Imagen recibida para procesar: " + imagePath);
-
-                myAgent.addBehaviour(new ProcessImageBehaviour(imagePath));
-
-                // Borramos el receptor ya que procesará una sola imagen y terminará
-                myAgent.removeBehaviour(this);
-            } else {
-                block();
-            }
-        }
+        addBehaviour(new ProcessImageBehaviour(imagePath, net));
     }
 
     private class ProcessImageBehaviour extends OneShotBehaviour {
-        private final String imagePath;
 
-        public ProcessImageBehaviour(String imagePath) {
+        private final String imagePath;
+        private final Net net;
+
+        public ProcessImageBehaviour(String imagePath, Net net) {
             this.imagePath = imagePath;
+            this.net = net;
         }
 
         @Override
         public void action() {
-            log("Procesando imagen con YOLOv8...");
+            log("Procesando imagen con YOLOv8: " + new File(imagePath).getName());
 
-            Mat img = null;
-            Mat blob = null;
-            Mat output = null;
+            Mat img         = null;
+            Mat blob        = null;
+            Mat output      = null;
             Mat predictions = null;
             Mat predictionsT = null;
 
             try {
-                // Cargar imagen
                 img = Imgcodecs.imread(imagePath);
                 if (img.empty()) {
-                    loge("ERROR: No se pudo cargar la imagen: " + imagePath);
+                    loge("No se pudo cargar la imagen: " + imagePath);
                     return;
                 }
 
-                // Cargar modelo yolov8n.onnx
-                String modelPath = "src/main/resources/models/yolov8n.onnx";
-                Net net = Dnn.readNetFromONNX(modelPath);
-
-                // Crear blob (YOLOv8 espera 640x640, escala 1/255.0, swapRB = true)
-                blob = Dnn.blobFromImage(
-                        img,
-                        1 / 255.0,
-                        new Size(640, 640),
-                        new Scalar(0, 0, 0),
-                        true,
-                        false
-                );
-
+                blob = Dnn.blobFromImage(img, 1 / 255.0, new Size(640, 640),
+                        new Scalar(0, 0, 0), true, false);
                 net.setInput(blob);
 
-                // Forward pass (Salida YOLOv8 shape: [1, 84, 8400])
-                output = net.forward();
-
-                // Reshape a 2D: [84, 8400]
+                output      = net.forward();
                 predictions = output.reshape(1, 84);
-
-                // Transponer a [8400, 84] para procesar por filas
                 predictionsT = new Mat();
                 Core.transpose(predictions, predictionsT);
 
-                // Procesar detecciones
                 List<String> detectedVehicles = new ArrayList<>();
-                List<String> vehicleClasses = Arrays.asList(
+                List<String> vehicleClasses   = Arrays.asList(
                         "bicycle", "car", "motorcycle", "bus", "train",
                         "truck", "boat", "airplane"
                 );
+                List<String> classNames = getClassNames();
 
-                int rows = predictionsT.rows(); // 8400 cajas candidatas
-                int cols = predictionsT.cols(); // 84 (4 coordenadas + 80 clases COCO)
+                int rows = predictionsT.rows();
+                int cols = predictionsT.cols();
 
                 for (int i = 0; i < rows; i++) {
-                    // Copiar fila nativa a array Java para alta velocidad (evita overhead de JNI)
                     float[] rowData = new float[cols];
                     predictionsT.get(i, 0, rowData);
 
-                    // Buscar la clase con la puntuación máxima (columnas de 4 a 83)
                     float maxScore = 0;
                     int classId = -1;
                     for (int j = 4; j < cols; j++) {
-                        float score = rowData[j];
-                        if (score > maxScore) {
-                            maxScore = score;
-                            classId = j - 4;
+                        if (rowData[j] > maxScore) {
+                            maxScore = rowData[j];
+                            classId  = j - 4;
                         }
                     }
 
-                    // Umbral de confianza razonable para detectar vehículos
-                    if (maxScore > 0.40 && classId < classNames.size()) {
+                    if (maxScore > 0.5 && classId >= 0 && classId < classNames.size()) {
                         String className = classNames.get(classId);
-
-                        if (vehicleClasses.contains(className)) {
-                            // Agregamos el tipo de vehículo si no está ya en la lista detectada de esta imagen
-                            if (!detectedVehicles.contains(className)) {
-                                detectedVehicles.add(className);
-                            }
+                        if (vehicleClasses.contains(className) && !detectedVehicles.contains(className)) {
+                            detectedVehicles.add(className);
                         }
                     }
                 }
 
-                String json = "{ \"resultado\": \"" +
-                        (detectedVehicles.isEmpty()
+                String json = "{ \"resultado\": \""
+                        + (detectedVehicles.isEmpty()
                                 ? "No se detectaron vehículos."
-                                : "Vehículos detectados: " + detectedVehicles) +
-                        "\", \"imagen\": \"" + imagePath + "\" }";
+                                : "Vehículos detectados: " + detectedVehicles)
+                        + "\", \"imagen\": \"" + imagePath + "\" }";
 
                 ACLMessage resultMsg = new ACLMessage(ACLMessage.INFORM);
                 resultMsg.setOntology("detection-result");
@@ -182,29 +159,27 @@ public class ProcessingAgent extends AgentBase {
                 if (uiAgents.length > 0) {
                     resultMsg.addReceiver(uiAgents[0].getName());
                     myAgent.send(resultMsg);
-                    log("Resultado enviado a " + uiAgents[0].getName().getLocalName() + ": " + json);
+                    log("Resultado enviado a UIAgent: " + json);
                 } else {
-                    loge("No se encontró UIAgent en el DF. Resultado de consola: " + json);
+                    loge("UIAgent no encontrado en el DF. Resultado: " + json);
                 }
+
             } catch (Exception e) {
-                loge("Excepción durante el procesamiento de la imagen: " + e.getMessage());
+                loge("Excepción durante el procesamiento: " + e.getMessage());
                 e.printStackTrace();
             } finally {
-                // Liberación explícita de memoria nativa de OpenCV
-                if (img != null) img.release();
-                if (blob != null) blob.release();
-                if (output != null) output.release();
-                if (predictions != null) predictions.release();
+                if (img != null)          img.release();
+                if (blob != null)         blob.release();
+                if (output != null)       output.release();
+                if (predictions != null)  predictions.release();
                 if (predictionsT != null) predictionsT.release();
 
-                // Notificar al PerceptionAgent para que libere el slot
                 ACLMessage feedbackMsg = new ACLMessage(ACLMessage.INFORM);
                 feedbackMsg.addReceiver(new AID(PerceptionAgent.NICKNAME, AID.ISLOCALNAME));
                 feedbackMsg.setOntology("processor-finished");
                 myAgent.send(feedbackMsg);
-                log("Enviado feedback de finalización al PerceptionAgent");
+                log("Feedback de finalización enviado al PerceptionAgent");
 
-                // Auto-destrucción
                 myAgent.doDelete();
             }
         }
@@ -212,6 +187,6 @@ public class ProcessingAgent extends AgentBase {
 
     @Override
     protected void takeDown() {
-        log("Terminando ProcessingAgent...");
+        log("Terminando ProcessingAgent.");
     }
 }

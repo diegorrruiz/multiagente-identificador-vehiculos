@@ -6,7 +6,9 @@ import es.upm.interfaz.MainUIFrame;
 import jade.core.behaviours.CyclicBehaviour;
 import jade.lang.acl.ACLMessage;
 import jade.lang.acl.MessageTemplate;
+
 import javax.swing.SwingUtilities;
+import java.io.File;
 
 public class UIAgent extends AgentBase {
 
@@ -26,15 +28,17 @@ public class UIAgent extends AgentBase {
     }
 
     public void handleDetectionResult(String content) {
-
         String imagePath = extractField(content, "imagen");
         String resultado = extractField(content, "resultado");
-
         String vehiculos = extractVehicles(resultado);
+
+        String tabId = (imagePath != null && !imagePath.isEmpty())
+                ? new File(imagePath).getName()
+                : "imagen_" + System.currentTimeMillis();
 
         SwingUtilities.invokeLater(() -> {
             if (ui != null) {
-                ui.updateTab("Default", imagePath, vehiculos);
+                ui.updateTab(tabId, imagePath, vehiculos);
             }
         });
     }
@@ -42,7 +46,6 @@ public class UIAgent extends AgentBase {
     private String extractField(String json, String fieldName) {
         String pattern = "\"" + fieldName + "\"";
         int startKey = json.indexOf(pattern);
-
         if (startKey == -1) return null;
 
         int colon = json.indexOf(":", startKey);
@@ -58,33 +61,27 @@ public class UIAgent extends AgentBase {
     }
 
     private String extractVehicles(String text) {
-
         if (text == null) return "";
 
         int start = text.indexOf("[");
-        int end = text.indexOf("]");
+        int end   = text.indexOf("]");
 
         if (start == -1 || end == -1 || end <= start) {
             return text;
         }
 
-        String inside = text.substring(start + 1, end);
-
-        return inside.trim();
+        return text.substring(start + 1, end).trim();
     }
 
     public class DetectionResultReceiverBehaviour extends CyclicBehaviour {
-
         @Override
         public void action() {
-
             MessageTemplate mt = MessageTemplate.and(
                     MessageTemplate.MatchPerformative(ACLMessage.INFORM),
                     MessageTemplate.MatchOntology("detection-result")
             );
 
             ACLMessage msg = myAgent.receive(mt);
-
             if (msg != null) {
                 ((UIAgent) myAgent).handleDetectionResult(msg.getContent());
             } else {

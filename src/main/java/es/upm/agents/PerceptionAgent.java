@@ -2,7 +2,6 @@ package es.upm.agents;
 
 import es.upm.idvehiculos.AgentBase;
 import es.upm.idvehiculos.AgentModel;
-import jade.core.AID;
 import jade.core.behaviours.CyclicBehaviour;
 import jade.core.behaviours.TickerBehaviour;
 import jade.core.behaviours.OneShotBehaviour;
@@ -19,17 +18,13 @@ import java.util.Set;
 
 public class PerceptionAgent extends AgentBase {
 
-    public static final String NICKNAME = "PerceptionAgent";
+    public static final String NICKNAME     = "PerceptionAgent";
     private static final String IMAGE_FOLDER = "imagenes/";
+    private static final int MAX_PROCESSORS  = 10;
 
-    // Registro de imágenes ya leídas para evitar repetirlas
-    private final Set<String> processedImages = new HashSet<>();
-
-    // Cola de imágenes en espera de ser procesadas
-    private final Queue<String> pendingImages = new LinkedList<>();
-
-    // Conjunto de nombres locales de los ProcessingAgents que están activos actualmente
-    private final Set<String> activeProcessors = new HashSet<>();
+    private final Set<String>   processedImages  = new HashSet<>();
+    private final Queue<String> pendingImages    = new LinkedList<>();
+    private final Set<String>   activeProcessors = new HashSet<>();
 
     @Override
     protected void setup() {
@@ -37,10 +32,7 @@ public class PerceptionAgent extends AgentBase {
         super.setup();
         log("Iniciado");
         registerAgentDF();
-
-        // Escanear la carpeta cada 5 segundos (5000 ms)
         addBehaviour(new ImageScannerBehaviour(this, 5000));
-
         addBehaviour(new ProcessorFeedbackReceiverBehaviour());
     }
 
@@ -53,54 +45,44 @@ public class PerceptionAgent extends AgentBase {
         @Override
         protected void onTick() {
             File folder = new File(IMAGE_FOLDER);
-
             if (!folder.exists() || !folder.isDirectory()) {
-                loge("La carpeta 'imagenes/' no existe");
+                loge("La carpeta '" + IMAGE_FOLDER + "' no existe");
                 return;
             }
 
-            File[] files = folder.listFiles((dir, name) ->
-                    name.endsWith(".jpg") || name.endsWith(".png") || name.endsWith(".jpeg") || name.endsWith(".webp")
-            );
+            File[] files = folder.listFiles((dir, name) -> {
+                String lower = name.toLowerCase();
+                return lower.endsWith(".jpg") || lower.endsWith(".jpeg")
+                        || lower.endsWith(".png") || lower.endsWith(".webp");
+            });
 
             if (files == null || files.length == 0) {
                 log("No hay imágenes en la carpeta");
                 return;
             }
 
-            boolean newImagesAdded = false;
+            boolean newImages = false;
             for (File file : files) {
                 String path = file.getAbsolutePath();
-
-                // Si es la primera vez que vemos esta imagen
                 if (!processedImages.contains(path)) {
                     processedImages.add(path);
                     pendingImages.add(path);
-                    log("Nueva imagen detectada y encolada: " + file.getName());
-                    newImagesAdded = true;
+                    log("Nueva imagen encolada: " + file.getName());
+                    newImages = true;
                 }
             }
 
-            // Si hay imágenes en cola, intentamos lanzar procesadores
-            if (newImagesAdded || !pendingImages.isEmpty()) {
+            if (newImages || !pendingImages.isEmpty()) {
                 checkAndSpawnProcessors();
             }
         }
     }
 
-    /**
-     * Método para lanzar agentes de procesamiento si no se supera el límite de 10 concurrentes
-     */
     private synchronized void checkAndSpawnProcessors() {
-        // Cambiamos 'while' por 'if' para lanzar estrictamente un único agente por tick (cada 5 segundos)
-        if (activeProcessors.size() < 10 && !pendingImages.isEmpty()) {
+        while (activeProcessors.size() < MAX_PROCESSORS && !pendingImages.isEmpty()) {
             String imagePath = pendingImages.poll();
-
-            // Generamos el nombre del agente inmediatamente para el registro
             String agentName = "Processor-" + System.currentTimeMillis() + "-" + activeProcessors.size();
             activeProcessors.add(agentName);
-
-            // Lanzamos el comportamiento
             addBehaviour(new CreateProcessingAgentBehaviour(imagePath, agentName));
         }
     }
@@ -110,7 +92,6 @@ public class PerceptionAgent extends AgentBase {
         private final String imagePath;
         private final String agentName;
 
-        // Ahora recibe el nombre pre-generado
         public CreateProcessingAgentBehaviour(String imagePath, String agentName) {
             this.imagePath = imagePath;
             this.agentName = agentName;
@@ -121,40 +102,26 @@ public class PerceptionAgent extends AgentBase {
             try {
                 ContainerController container = getContainerController();
 
-                // Usamos el nombre que ya reservamos en la lista
-                AgentController procAgent =
-                        container.createNewAgent(agentName,
-                                "es.upm.agents.ProcessingAgent",
-                                null);
-
+                AgentController procAgent = container.createNewAgent(
+                        agentName,
+                        "es.upm.agents.ProcessingAgent",
+                        new Object[]{imagePath}
+                );
                 procAgent.start();
-                log("Creado agente de procesamiento: " + agentName + " (Activos: " + activeProcessors.size() + "/10)");
-
-                // Enviar mensaje REQUEST con la ruta de la imagen
-                ACLMessage msg = new ACLMessage(ACLMessage.REQUEST);
-                msg.addReceiver(new AID(agentName, AID.ISLOCALNAME));
-                msg.setOntology("process-image");
-                msg.setContent(imagePath);
-
-                send(msg);
-                log("Mensaje enviado a " + agentName + " para la imagen " + new File(imagePath).getName());
+                log("Iniciado " + agentName + " → " + new File(imagePath).getName()
+                        + " (activos: " + activeProcessors.size() + "/" + MAX_PROCESSORS + ")");
 
             } catch (Exception e) {
-                e.printStackTrace();
-                loge("Error creando agente de procesamiento: " + agentName);
-
-                // Si el agente falla al crearse, lo removemos para no perder ese slot para siempre
-                synchronized (myAgent) {
+                loge("Error creando agente " + agentName + ": " + e.getMessage());
+                synchronized (PerceptionAgent.this) {
                     activeProcessors.remove(agentName);
                 }
             }
         }
     }
 
-    /**
-     * Escucha los mensajes de confirmación de fin de procesamiento para liberar slots
-     */
     private class ProcessorFeedbackReceiverBehaviour extends CyclicBehaviour {
+
         @Override
         public void action() {
             MessageTemplate mt = MessageTemplate.and(
@@ -165,13 +132,12 @@ public class PerceptionAgent extends AgentBase {
             ACLMessage msg = myAgent.receive(mt);
             if (msg != null) {
                 String senderName = msg.getSender().getLocalName();
-                log("Feedback de finalización recibido de " + senderName);
-
-                synchronized (myAgent) {
-                    // Quitamos al agente de la lista de activos, pero NO lanzamos otro desde aquí
+                synchronized (PerceptionAgent.this) {
                     activeProcessors.remove(senderName);
-                    log("Liberado slot de " + senderName + ". (Activos restantes: " + activeProcessors.size() + "/10)");
+                    log("Slot liberado por " + senderName
+                            + " (activos: " + activeProcessors.size() + "/" + MAX_PROCESSORS + ")");
                 }
+                checkAndSpawnProcessors();
             } else {
                 block();
             }
@@ -181,6 +147,6 @@ public class PerceptionAgent extends AgentBase {
     @Override
     protected void takeDown() {
         deregisterAgentDF();
-        log("Terminando PerceptionAgent...");
+        log("Terminando PerceptionAgent.");
     }
 }
